@@ -1,6 +1,6 @@
 import pytest
 
-from brainsync.crawl import Note, crawl, is_internal, normalize_url, parse_note
+from brainsync.crawl import crawl, is_internal, normalize_url, parse_note
 
 PAGE = """
 <html><head><title>Evergreen notes</title>
@@ -220,6 +220,41 @@ def test_sidebar_links_stay_out_of_note_body(mocker):
     note = parse_note(f"{base}/focusing/habits", VITEPRESS_PAGE, base)
     assert note.outgoing == (f"{base}/focusing/rules",), (
         "outgoing links should come from the main content, not the sidebar"
+    )
+
+
+MKDOCS_PAGE = """
+<html><head><title>Introduction - Things Learned</title></head><body>
+<div class="md-sidebar"><nav class="md-nav">
+<a href="Markdown%20Syntax/">Markdown Syntax</a>
+<a href="Coda.md">Coda</a>
+<a href="Aleph/">Aleph</a>
+</nav></div>
+<main><article class="md-content__inner"><h1>Things-Learned</h1>
+<p>No links here.</p></article></main>
+</body></html>
+"""
+
+
+def test_parse_note_falls_back_to_navigation_when_body_has_no_links():
+    note = parse_note(
+        "https://sunflowerno0b.github.io/ATW/", MKDOCS_PAGE, "https://sunflowerno0b.github.io"
+    )
+    assert note.outgoing == (
+        "https://sunflowerno0b.github.io/ATW/Markdown%20Syntax",
+        "https://sunflowerno0b.github.io/ATW/Aleph",
+    ), "a body with no links should discover the sidebar navigation, skipping raw source files"
+
+
+def test_parse_note_keeps_body_links_over_navigation_fallback(mocker):
+    html = (
+        "<html><body><main><h1>Page</h1>"
+        '<p><a href="/note">note</a></p></main>'
+        '<nav><a href="/other">other</a></nav></body></html>'
+    )
+    note = parse_note("https://garden.example.com/page", html, "https://garden.example.com")
+    assert note.outgoing == ("https://garden.example.com/note",), (
+        "a body with links should not fall back to whole-page navigation links"
     )
 
 

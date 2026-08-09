@@ -71,27 +71,40 @@ def extract_body(soup: BeautifulSoup, title: str):
     return soup.find("main") or soup.find("article") or soup.body or soup
 
 
-def extract_internal_links(scope, page_url: str, base: str = BASE_URL) -> tuple[str, ...]:
-    seen: dict[str, None] = {}
+RAW_NOTE_SUFFIXES = (".md", ".org")
+
+
+def _internal_hrefs(scope, page_url: str, base: str = BASE_URL):
+    page = normalize_url(page_url, base)
     for anchor in scope.find_all("a", href=True):
         href = anchor["href"]
         if href.startswith(("mailto:", "#")) or not is_internal(href, base):
             continue
-        target = normalize_url(href, base)
-        if target != normalize_url(page_url, base) and target != base:
-            seen[target] = None
-    return tuple(seen)
+        target = normalize_url(href, page_url)
+        if target != page and target != base:
+            yield target
+
+
+def extract_internal_links(scope, page_url: str, base: str = BASE_URL) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(_internal_hrefs(scope, page_url, base)))
 
 
 def parse_note(url: str, html: str, base: str = BASE_URL) -> Note:
     soup = BeautifulSoup(html, "html.parser")
     title = extract_title(soup)
     body = extract_body(soup, title)
+    outgoing = extract_internal_links(body, url, base)
+    if not outgoing:
+        outgoing = tuple(
+            target
+            for target in extract_internal_links(soup, url, base)
+            if not urlsplit(target).path.endswith(RAW_NOTE_SUFFIXES)
+        )
     return Note(
         url=normalize_url(url, base),
         title=title,
         body_html=str(body),
-        outgoing=extract_internal_links(body, url, base),
+        outgoing=outgoing,
     )
 
 
