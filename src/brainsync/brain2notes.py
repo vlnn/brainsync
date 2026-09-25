@@ -48,6 +48,13 @@ def select_thoughts(snapshot: BrainSnapshot, tag: str | None) -> list[BrainThoug
     return sorted((t for t in normal if marker.id in snapshot.tag_ids_of(t)), key=lambda t: (t.name, t.id))
 
 
+FALLBACK_SLUG = re.compile(r"untitled(-[0-9a-f]{8})?")
+
+
+def kept_slug(owned_slug: str | None) -> str | None:
+    return None if owned_slug is None or FALLBACK_SLUG.fullmatch(owned_slug) else owned_slug
+
+
 def assign_slugs(
     thoughts: list[BrainThought], garden: dict[str, GardenNote], preassigned: dict[str, str] | None = None
 ) -> dict[str, str]:
@@ -59,8 +66,8 @@ def assign_slugs(
         if thought.id in preassigned:
             slugs[thought.id] = preassigned[thought.id]
             continue
-        slug = owned.get(thought.id, slugify(thought.name))
-        if slug in slugs.values() or (slug in foreign and thought.id not in owned):
+        slug = kept_slug(owned.get(thought.id)) or slugify(thought.name)
+        if slug in slugs.values() or (slug in foreign and slug != owned.get(thought.id)):
             slug = f"{slug}-{thought.id[:8]}"
         slugs[thought.id] = slug
     return slugs

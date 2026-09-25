@@ -25,8 +25,27 @@ class GardenNote:
         return f"{self.slug}.{self.format}"
 
 
+UKRAINIAN = str.maketrans({
+    "а": "a", "б": "b", "в": "v", "г": "h", "ґ": "g", "д": "d", "е": "e", "є": "ie",
+    "ж": "zh", "з": "z", "и": "y", "і": "i", "ї": "i", "й": "i", "к": "k", "л": "l",
+    "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ь": "",
+    "ю": "iu", "я": "ia",
+})
+WORD_INITIAL = {"є": "ye", "ї": "yi", "й": "y", "ю": "yu", "я": "ya"}
+WORD_INITIAL_LETTER = re.compile(r"\b[єїйюя]")
+INNER_APOSTROPHE = re.compile(r"(?<=[а-яієїґ])['’ʼ](?=[а-яієїґ])")
+
+
+def transliterate(text: str) -> str:
+    text = unicodedata.normalize("NFC", text.lower())
+    text = INNER_APOSTROPHE.sub("", text).replace("зг", "zgh")
+    text = WORD_INITIAL_LETTER.sub(lambda match: WORD_INITIAL[match.group(0)], text)
+    return text.translate(UKRAINIAN)
+
+
 def slugify(name: str, limit: int = 60) -> str:
-    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    ascii_name = unicodedata.normalize("NFKD", transliterate(name)).encode("ascii", "ignore").decode()
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-") or "untitled"
     return slug if len(slug) <= limit else slug[:limit].rsplit("-", 1)[0]
 

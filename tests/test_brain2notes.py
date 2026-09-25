@@ -128,6 +128,40 @@ def test_assign_slugs_keeps_owned_slug_and_suffixes_collisions():
     assert slugs[IDEAS] == f"about-{IDEAS[:8]}", "a slug taken by a hand-written note should get a guid suffix"
 
 
+@pytest.mark.parametrize(
+    ("name", "owned_slug", "expected"),
+    [
+        ("Теплиця", f"untitled-{ESSAY[:8]}", "teplytsia"),
+        ("Теплиця", "untitled", "teplytsia"),
+        ("Untitled", "untitled", "untitled"),
+        ("My Essay", "untitled-draft", "untitled-draft"),
+    ],
+    ids=[
+        "suffixed fallback slug is replaced by a real one",
+        "bare fallback slug is replaced by a real one",
+        "a thought really named Untitled keeps its slug",
+        "a chosen slug that merely starts with untitled is kept",
+    ],
+)
+def test_assign_slugs_heals_fallback_slugs(name, owned_slug, expected):
+    garden = {owned_slug: garden_note(owned_slug, name, brain_id=ESSAY)}
+    slugs = assign_slugs([BrainThought(ESSAY, name)], garden)
+    assert slugs[ESSAY] == expected, (
+        "assign_slugs should drop an owned untitled fallback slug once the name slugifies properly"
+    )
+
+
+def test_assign_slugs_healing_never_takes_a_handwritten_slug():
+    garden = {
+        "untitled": garden_note("untitled", "Теплиця", brain_id=ESSAY),
+        "teplytsia": garden_note("teplytsia", "Моя теплиця"),
+    }
+    slugs = assign_slugs([BrainThought(ESSAY, "Теплиця")], garden)
+    assert slugs[ESSAY] == f"teplytsia-{ESSAY[:8]}", (
+        "a healed slug colliding with a hand-written note should get a guid suffix, not overwrite it"
+    )
+
+
 def test_plan_merge_writes_frontmatter_with_date_tags_and_ownership():
     notes = {ESSAY: BrainNote("md", "body")}
     plan = plan_merge(snapshot(notes), {}, "public")
