@@ -368,3 +368,28 @@ def test_sync_main_reports_remaining_skips(repo, monkeypatch, synced_world, mock
     assert "My Org Note" in capsys.readouterr().err, (
         "titles that stay skipped under --adopt-all should be reported, not silent"
     )
+
+
+@pytest.mark.parametrize(
+    ("brain_render", "expected_date"),
+    [
+        ("---\ntitle: Alpha\ndate: 2026-09-16\nbrain-id: id-a\n---\n", "2026-09-25"),
+        ("---\ntitle: Alpha\ndate: 2026-09-16\nbrain-id: id-a\n---\n\nold body\n", "2026-09-16"),
+    ],
+    ids=["stub written in the garden gets today's date", "edit of a written note keeps its date"],
+)
+def test_execute_plan_redates_stubs_fleshed_out_in_the_garden(repo, mocker, brain_render, expected_date):
+    from brainsync.sync import execute_plan
+    from brainsync.brain2notes import MergePlan
+
+    (repo / "notes" / "alpha.md").write_text("---\ntitle: Alpha\ndate: 2026-09-16\nbrain-id: id-a\n---\n\nnew body\n")
+    plan = SyncPlan(pushes=("alpha.md",))
+    merge = MergePlan(writes={"alpha.md": brain_render})
+
+    execute_plan(plan, merge, repo / "notes", mocker.Mock(), {"id-a": "Alpha"}, {"alpha": "id-a"}, today="2026-09-25")
+
+    text = (repo / "notes" / "alpha.md").read_text()
+    assert f"date: {expected_date}\n" in text, (
+        "pushing a stub's first content should redate the garden file, other pushes should not"
+    )
+    assert text.endswith("new body\n"), "redating should leave the pushed body untouched"

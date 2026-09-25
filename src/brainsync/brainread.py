@@ -52,6 +52,7 @@ class BrainSnapshot:
     links: tuple[BrainLink, ...] = ()
     notes: dict[str, BrainNote] = field(default_factory=dict)
     images: dict[str, tuple[BrainImage, ...]] = field(default_factory=dict)
+    changed: dict[str, str] = field(default_factory=dict)
 
     def _linked_tag_ids(self, thought: BrainThought) -> tuple[str, ...]:
         return tuple(

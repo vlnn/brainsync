@@ -11,10 +11,13 @@ from brainsync.api import ApiClient, load_config
 from brainsync.brain2notes import (
     MergePlan,
     adopt_text,
+    fleshed_out,
     plan_merge,
     push_body,
     related_of,
     strip_frontmatter,
+    today_iso,
+    with_date,
     write_images,
 )
 from brainsync.garden import load_garden
@@ -126,6 +129,13 @@ def _push_note(filename: str, notes_dir: Path, client, names: dict[str, str], id
     client.update_note_markdown(brain_id, push_body(garden_text, names[brain_id], ids_by_slug))
 
 
+def _redate_fleshed_out(filename: str, notes_dir: Path, rendered: str, today: str) -> None:
+    path = notes_dir / filename
+    garden_text = path.read_text()
+    if fleshed_out(rendered, garden_text):
+        path.write_text(with_date(garden_text, today))
+
+
 def _adopt_note(filename: str, thought_id: str, notes_dir: Path, client, title: str, ids_by_slug: dict[str, str], rendered: str) -> None:
     garden_text = (notes_dir / filename).read_text()
     client.update_note_markdown(thought_id, push_body(garden_text, title, ids_by_slug))
@@ -139,12 +149,15 @@ def execute_plan(
     client,
     names: dict[str, str],
     ids_by_slug: dict[str, str],
+    today: str | None = None,
 ) -> None:
+    today = today or today_iso()
     for filename in plan.adoptions:
         thought_id = merge.adopted[filename]
         _adopt_note(filename, thought_id, notes_dir, client, names[thought_id], ids_by_slug, merge.writes[filename])
     for filename in plan.pushes:
         _push_note(filename, notes_dir, client, names, ids_by_slug, merge.writes[filename])
+        _redate_fleshed_out(filename, notes_dir, merge.writes[filename], today)
     pulled_slugs = {Path(filename).stem for filename in plan.pulls}
     for filename in plan.pulls:
         (notes_dir / filename).write_text(merge.writes[filename])

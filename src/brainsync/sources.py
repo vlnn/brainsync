@@ -74,20 +74,29 @@ def _fetch_graph(client: ApiClient, thought_id: str) -> dict | None:
         raise
 
 
-def log_thought_ids(client: ApiClient, page_size: int = LOG_PAGE) -> set[str]:
-    thought_ids: set[str] = set()
+def _keep_latest(changes: dict[str, str], page: list[dict]) -> None:
+    for record in page:
+        if record["sourceType"] == SOURCE_TYPE_THOUGHT:
+            source, moment = record["sourceId"], record["creationDateTime"]
+            changes[source] = max(changes.get(source, ""), moment)
+
+
+def log_last_changes(client: ApiClient, page_size: int = LOG_PAGE) -> dict[str, str]:
+    changes: dict[str, str] = {}
     end_time: str | None = None
     while True:
         page = client.modifications(max_logs=page_size, end_time=end_time)
         if not page:
-            return thought_ids
-        thought_ids.update(
-            record["sourceId"] for record in page if record["sourceType"] == SOURCE_TYPE_THOUGHT
-        )
+            return changes
+        _keep_latest(changes, page)
         oldest = min(record["creationDateTime"] for record in page)
         if oldest == end_time:
-            return thought_ids
+            return changes
         end_time = oldest
+
+
+def log_thought_ids(client: ApiClient, page_size: int = LOG_PAGE) -> set[str]:
+    return set(log_last_changes(client, page_size))
 
 
 def _image_bytes(client: ApiClient, url: str, name: str) -> bytes:
@@ -131,11 +140,12 @@ class ApiSource:
         links: dict[BrainLink, None] = {}
         notes: dict[str, BrainNote] = {}
         images: dict[str, tuple[BrainImage, ...]] = {}
+        changed = log_last_changes(self.client)
         seeds = [
             self.client.brain()["homeThoughtId"],
             *(record["id"] for record in self.client.tags()),
             *(record["id"] for record in self.client.types()),
-            *sorted(log_thought_ids(self.client)),
+            *sorted(changed),
         ]
         queue = deque(seeds)
         visited: set[str] = set()
@@ -166,4 +176,4 @@ class ApiSource:
                 + (" …" if len(skipped) > 5 else ""),
                 file=sys.stderr,
             )
-        return BrainSnapshot(thoughts=thoughts, links=tuple(links), notes=notes, images=images)
+        return BrainSnapshot(thoughts=thoughts, links=tuple(links), notes=notes, images=images, changed=changed)

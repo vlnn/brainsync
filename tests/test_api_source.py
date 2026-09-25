@@ -329,3 +329,26 @@ def test_snapshot_carries_thought_creation_dates(client):
     assert snapshot.thoughts["th-b"].created == "", (
         "records without creationDateTime should degrade to an empty created"
     )
+
+
+def test_log_last_changes_keeps_the_latest_timestamp_per_thought(mocker):
+    from brainsync.sources import log_last_changes
+
+    client = mocker.Mock()
+    client.modifications.side_effect = [
+        [modification("th-a", "2026-09-24T18:00:00"), modification("link-1", "2026-09-24T17:00:00", source_type=3)],
+        [modification("th-a", "2026-09-16T10:00:00"), modification("th-b", "2026-09-15T10:00:00")],
+        [],
+    ]
+
+    assert log_last_changes(client) == {"th-a": "2026-09-24T18:00:00", "th-b": "2026-09-15T10:00:00"}, (
+        "log_last_changes should map each thought to its most recent logged change"
+    )
+
+
+def test_snapshot_carries_last_change_times(client):
+    client.modifications.side_effect = [[modification("th-a", "2026-09-24T18:00:00")], []]
+    snapshot = ApiSource(client).snapshot(tag=None)
+    assert snapshot.changed == {"th-a": "2026-09-24T18:00:00"}, (
+        "the snapshot should expose last change times so fleshed-out stubs can be redated"
+    )

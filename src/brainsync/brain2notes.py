@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import os
 import json
 import re
@@ -13,7 +14,7 @@ from brainsync.api import ApiClient, load_config
 from brainsync.sources import ApiSource, BrainSource, BrzSource
 from brainsync.brainzip import brain_url, long_guid
 from brainsync.crawl import http_fetch
-from brainsync.garden import GardenNote, load_garden, pull_site, slugify
+from brainsync.garden import GardenNote, load_garden, parse_frontmatter, pull_site, slugify
 
 BRAIN_LINK = re.compile(r"\[([^\]]*)\]\((brain://[^)\s]+)\)")
 MD_NOTE_LINK = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)/:\s]+)\.md\)")
@@ -198,7 +199,7 @@ def _frontmatter_fields(match: re.Match) -> dict[str, str]:
     return {line.split(":", 1)[0].strip(): line for line in lines}
 
 
-def merge_frontmatter(rendered: str, existing: str) -> str:
+def merge_frontmatter(rendered: str, existing: str, owned: tuple[str, ...] = OWNED_FIELDS) -> str:
     rendered_match = FRONTMATTER_FENCES.match(rendered)
     existing_match = FRONTMATTER_FENCES.match(existing)
     if not rendered_match or not existing_match:
@@ -206,12 +207,54 @@ def merge_frontmatter(rendered: str, existing: str) -> str:
     rendered_fields = _frontmatter_fields(rendered_match)
     existing_fields = _frontmatter_fields(existing_match)
     merged = [
-        rendered_fields[key] if key in OWNED_FIELDS else line
+        rendered_fields[key] if key in owned else line
         for key, line in existing_fields.items()
-        if key in rendered_fields or key not in OWNED_FIELDS
+        if key in rendered_fields or key not in owned
     ]
     merged += [line for key, line in rendered_fields.items() if key not in existing_fields]
     return "---\n" + "\n".join(merged) + "\n---\n" + rendered[rendered_match.end():]
+
+
+LEADING_HEADING = re.compile(r"\A\s*#\s+[^\n]*\n?")
+DATE_LINE = re.compile(r"^date:.*$", re.MULTILINE)
+
+
+def is_stub(text: str) -> bool:
+    body = strip_related(strip_frontmatter(text))
+    return bool(text) and not LEADING_HEADING.sub("", body).strip()
+
+
+def fleshed_out(existing: str, rendered: str) -> bool:
+    return is_stub(existing) and not is_stub(rendered)
+
+
+def publish_day(changed: str, previous: str, today: str) -> str:
+    day = changed[:10]
+    return day if day and day >= previous else today
+
+
+def with_date(text: str, day: str) -> str:
+    fences = FRONTMATTER_FENCES.match(text)
+    if not fences:
+        return text
+    head = fences.group(1)
+    head = DATE_LINE.sub(f"date: {day}", head) if DATE_LINE.search(head) else f"{head}date: {day}\n"
+    return f"---\n{head}---\n{text[fences.end():]}"
+
+
+def redated(rendered: str, existing: str, changed: str, today: str) -> str:
+    day = publish_day(changed, parse_frontmatter(existing).get("date", ""), today)
+    return merge_frontmatter(with_date(rendered, day), existing, owned=(*OWNED_FIELDS, "date"))
+
+
+def merged_note(rendered: str, existing: str, changed: str, today: str) -> str:
+    if fleshed_out(existing, rendered):
+        return redated(rendered, existing, changed, today)
+    return merge_frontmatter(rendered, existing)
+
+
+def today_iso() -> str:
+    return datetime.date.today().isoformat()
 
 
 def frontmatter(thought: BrainThought, tags: tuple[str, ...]) -> str:
@@ -244,8 +287,13 @@ def _garden_by_title(garden: dict[str, GardenNote]) -> dict[str, str]:
 
 
 def plan_merge(
-    snapshot: BrainSnapshot, garden: dict[str, GardenNote], tag: str | None, adopt: bool = False
+    snapshot: BrainSnapshot,
+    garden: dict[str, GardenNote],
+    tag: str | None,
+    adopt: bool = False,
+    today: str | None = None,
 ) -> MergePlan:
+    today = today or today_iso()
     thoughts = select_thoughts(snapshot, tag)
     handwritten = {note.title: note for note in garden.values() if not note.brain_id}
     adoptions = adoption_targets(thoughts, garden) if adopt else {}
@@ -254,8 +302,11 @@ def plan_merge(
     by_title = {**_garden_by_title(garden), **{t.name: f"{slugs[t.id]}.md" for t in exported}}
     texts = {note.filename: note.text for note in garden.values()}
     writes = {
-        f"{slugs[t.id]}.md": merge_frontmatter(
-            render_note(snapshot, t, slugs, by_title, tag), texts.get(f"{slugs[t.id]}.md", "")
+        f"{slugs[t.id]}.md": merged_note(
+            render_note(snapshot, t, slugs, by_title, tag),
+            texts.get(f"{slugs[t.id]}.md", ""),
+            snapshot.changed.get(t.id, ""),
+            today,
         )
         for t in exported
     }

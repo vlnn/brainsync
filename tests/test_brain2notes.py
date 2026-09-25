@@ -7,6 +7,7 @@ from brainsync.brain2notes import (
     rewrite_image_paths,
     assign_slugs,
     drop_leading_title,
+    is_stub,
     note_body,
     merge_frontmatter,
     plan_merge,
@@ -25,7 +26,7 @@ IDEAS = stable_id("thought", "ideas")
 SECRET = stable_id("thought", "secret")
 
 
-def snapshot(notes=None, links=(), images=None):
+def snapshot(notes=None, links=(), images=None, changed=None):
     return BrainSnapshot(
         thoughts={
             PUBLIC: BrainThought(PUBLIC, "Public", kind=KIND_TAG),
@@ -37,6 +38,7 @@ def snapshot(notes=None, links=(), images=None):
         links=(BrainLink(PUBLIC, ESSAY, 1, MEANING_TAG), *links),
         notes=notes or {},
         images=images or {},
+        changed=changed or {},
     )
 
 
@@ -579,3 +581,76 @@ def test_push_body_drops_leading_title_heading():
     assert push_body(garden_text, "My Essay", {}) == "# My Essay\n\nbody\n", (
         "push_body should not double the title heading for adopted site notes"
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("---\ntitle: T\n---\n", True),
+        ("---\ntitle: T\n---\n\n", True),
+        ("---\ntitle: T\n---\n\n# T\n", True),
+        ("---\ntitle: T\n---\n\n## Related\n\n- [A](a.md)\n", True),
+        ("---\ntitle: T\n---\n\nbody\n", False),
+        ("---\ntitle: T\n---\n\nbody\n\n## Related\n\n- [A](a.md)\n", False),
+        ("", False),
+    ],
+    ids=[
+        "frontmatter only",
+        "frontmatter and blank lines",
+        "title heading only",
+        "related section only",
+        "body",
+        "body with related",
+        "missing file",
+    ],
+)
+def test_is_stub(text, expected):
+    assert is_stub(text) is expected, (
+        "is_stub should be true only for an existing note with nothing but frontmatter, title and Related"
+    )
+
+
+def existing_essay(date, body=""):
+    return f"---\ntitle: My Essay\ndate: {date}\ntags: [quotes]\nbrain-id: {ESSAY}\n---\n\n{body}"
+
+
+@pytest.mark.parametrize(
+    ("existing", "note", "changed", "expected_date"),
+    [
+        (existing_essay("2026-09-16"), "body", {ESSAY: "2026-09-24T18:02:11"}, "2026-09-24"),
+        (existing_essay("2026-09-16", "## Related\n\n- [Ideas](ideas.md)\n"), "body", {ESSAY: "2026-09-24T18:02:11"}, "2026-09-24"),
+        (existing_essay("2026-09-16"), "body", {}, "2026-09-25"),
+        (existing_essay("2026-09-16"), "body", {ESSAY: "2026-09-10T08:00:00"}, "2026-09-25"),
+        (existing_essay("2026-09-16"), None, {ESSAY: "2026-09-24T18:02:11"}, "2026-09-16"),
+        (existing_essay("2026-09-16", "old body\n"), "new body", {ESSAY: "2026-09-24T18:02:11"}, "2026-09-16"),
+        (None, "body", {ESSAY: "2026-09-24T18:02:11"}, "2026-07-01"),
+    ],
+    ids=[
+        "stub fleshed out in the brain takes the brain's last change date",
+        "a Related-only note counts as a stub",
+        "without a logged change the fleshing-out sync day is used",
+        "a logged change older than the stub date falls back to the sync day",
+        "a stub that is still empty keeps its date",
+        "an already written note keeps its date on edits",
+        "a note exported for the first time keeps the creation date",
+    ],
+)
+def test_plan_merge_redates_stubs_when_they_get_content(existing, note, changed, expected_date):
+    notes = {ESSAY: BrainNote("md", note)} if note is not None else {}
+    garden = (
+        {"my-essay": garden_note("my-essay", "My Essay", brain_id=ESSAY, text=existing)} if existing else {}
+    )
+    plan = plan_merge(snapshot(notes, changed=changed), garden, "public", today="2026-09-25")
+    assert f"date: {expected_date}\n" in plan.writes["my-essay.md"], (
+        "plan_merge should move the date to the moment a stub gets content, and leave it alone otherwise"
+    )
+
+
+def test_plan_merge_redating_is_a_fixed_point():
+    notes = {ESSAY: BrainNote("md", "body")}
+    brain = snapshot(notes, changed={ESSAY: "2026-09-24T18:02:11"})
+    stub = {"my-essay": garden_note("my-essay", "My Essay", brain_id=ESSAY, text=existing_essay("2026-09-16"))}
+    first = plan_merge(brain, stub, "public", today="2026-09-25").writes["my-essay.md"]
+    fleshed = {"my-essay": garden_note("my-essay", "My Essay", brain_id=ESSAY, text=first)}
+    second = plan_merge(brain, fleshed, "public", today="2026-09-30").writes["my-essay.md"]
+    assert second == first, "a note redated once should not be redated again by later syncs"
